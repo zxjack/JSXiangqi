@@ -173,14 +173,16 @@ select.addEventListener("change", async function() {
 
 // game start
 (function() {
-    window.checkText = document.createElement("h1");
-    window.checkText = document.createElement("h1");
-    checkText.style.display="inline";
-    checkText.innerHTML="";
-    
+    // 将军提示横幅：贴在棋盘正上方，而不是原先的 left:1000px（屏幕外）。
+    window.checkText = document.createElement("div");
+    checkText.setAttribute("id", "checkBanner");
+    checkText.style.display = "none";
+    checkText.innerHTML = "";
     checkText.style.position = "absolute";
-    checkText.style.top = "150px";
-    checkText.style.left ="1000px";
+    checkText.style.top = "120px";
+    checkText.style.left = "250px";
+    checkText.style.width = "585px";
+    checkText.style.textAlign = "center";
     document.body.appendChild(checkText);
     
     window.beginText = document.createElement("h1");
@@ -198,6 +200,7 @@ select.addEventListener("change", async function() {
 (function() {
     // turn info
     window.turnText = document.createElement("h1");
+    turnText.setAttribute("id", "turnText");
     turnText.innerHTML = "Red Turn";
     turnText.style.position = "absolute";
     turnText.style.top = "250px";
@@ -331,24 +334,24 @@ function executeMove(newRow, newCol) {
     chessboard.curPiece.col = newCol; 
     chessboard.curPiece = null; 
 
-    var checkRed = chessboard.isCheck("red", chessboard.board); 
-    var checkBlack = chessboard.isCheck("black", chessboard.board); 
-    if (checkRed || checkBlack) {
-        checkText.innerHTML = "Check!"; 
-        var checkmateFlag = chessboard.isCheckMate(chessboard.turn, chessboard.board); 
-        console.log(chessboard.turn + " is checkmated: " + checkmateFlag); 
-        if (checkmateFlag) {
-            var winner = (chessboard.turn == "red") ? "Black" : "Red"; 
-            checkText.innerHTML = "Checkmate!";
-            turnText.innerHTML = winner + " Win"; 
-            document.getElementById("beginText").innerHTML = "Game End"; 
-            chessboard.status = false; 
+    // 将军 / 将死 / 胜负判定
+    // switchSide() 已把 turn 交给下一方，所以此刻 chessboard.turn 是**被将方**。
+    var loser = chessboard.turn;
+    var checked = chessboard.isCheck(loser, chessboard.board);
+
+    if (checked) {
+        var mated = chessboard.isCheckMate(loser, chessboard.board);
+        if (mated) {
+            var winner = (loser == "red") ? "黑方" : "红方";
+            showGameOver(winner + "胜！", loser);
+        } else {
+            showCheck((loser == "red") ? "红方被将军！" : "黑方被将军！");
         }
     } else {
-        checkText.innerHTML = ""; 
+        showCheck("");
     }
-    
-    initListeners(); 
+
+    initListeners();
 }
 
 function moveRecord(curRow, curCol, newRow, newCol, clickedPiece, tgtPiece) {
@@ -527,6 +530,60 @@ function initListeners() {
         } else {
             divs[i].addEventListener("click", cancelPiece, false);
         }
+    }
+}
+
+// ---- 将军提示 / 胜负横幅 ----------------------------------------------
+// msg 非空时显示横幅，否则隐藏。
+function showCheck(msg) {
+    if (msg) {
+        checkText.innerHTML = msg;
+        checkText.style.display = "block";
+    } else {
+        checkText.innerHTML = "";
+        checkText.style.display = "none";
+    }
+}
+
+// 终局：显示结果横幅，锁定棋盘（chessboard.status = false 使 clickBoard
+// 与 choosePiece/cancelPiece 全部拒绝后续操作），并提供"再来一局"。
+function showGameOver(result, loserColor) {
+    checkText.innerHTML = result;
+    checkText.style.display = "block";
+    chessboard.status = false;
+    chessboard.curPiece = null;
+
+    var beginEl = document.getElementById("beginText");
+    if (beginEl) beginEl.innerHTML = "Game End";
+
+    // 用 resign 按钮的父容器放一个"再来一局"，避免新建复杂布局
+    var again = document.getElementById("playAgainBtn");
+    if (!again) {
+        again = document.createElement("button");
+        again.id = "playAgainBtn";
+        again.className = "funcBtn";
+        again.innerHTML = "Play Again";
+        again.addEventListener("click", function () {
+            chessboard.initBoard(situation);
+            chessboard.status = true;
+            chessboard.turn = "red";
+            chessboard.turnCnt = 0;
+            chessboard.curPiece = null;
+            deletBoard();
+            renderBoard();
+            var be = document.getElementById("beginText");
+            if (be) be.innerHTML = "Game Start";
+            var tt = document.getElementById("turnText");
+            if (tt) tt.innerHTML = "Red Turn";
+            var mv = document.getElementById("movesRecords");
+            if (mv) mv.innerHTML = "";
+            showCheck("");
+            again.remove();
+            initListeners();
+        });
+        var anchorBtn = document.querySelector(".funcBtn");
+        if (anchorBtn && anchorBtn.parentNode) anchorBtn.parentNode.appendChild(again);
+        else document.body.appendChild(again);
     }
 }
 

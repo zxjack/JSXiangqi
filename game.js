@@ -270,21 +270,19 @@ select.addEventListener("change", async function() {
     blackActionHeader.style.paddingRight = "75px"; 
 })();
 
+function handleResign() {
+    if (!chessboard.status) return;
+    var winner = chessboard.turn == "red" ? "black" : "red";
+    endGame("resign", winner);
+}
+
 function handleDraw() {
-    alert("request draw"); 
-    // impl draw
+    if (!chessboard.status) return;
+    endGame("draw", "draw");
 }
 
 function handleNewGame() {
-    console.log("Button clicked!");
-    location.reload(); // Refresh the page
-}
-
-function handleResign() {
-    var winner = (chessboard.turn === "red") ? "Black" : "Red";  
-    turnText.innerHTML = winner + " Win!";
-    beginText.innerHTML = "Game End"; 
-    chessboard.status = false; 
+    restartGame();
 }
 
 // click board
@@ -340,13 +338,13 @@ function executeMove(newRow, newCol) {
     var checked = chessboard.isCheck(loser, chessboard.board);
 
     if (checked) {
-        var mated = chessboard.isCheckMate(loser, chessboard.board);
-        if (mated) {
-            var winner = (loser == "red") ? "黑方" : "红方";
-            showGameOver(winner + "胜！", loser);
+        if (chessboard.isCheckMate(loser, chessboard.board)) {
+            endGame("checkmate", loser == "red" ? "black" : "red");
         } else {
-            showCheck((loser == "red") ? "红方被将军！" : "黑方被将军！");
+            showCheck(loser == "red" ? "红方被将军！" : "黑方被将军！");
         }
+    } else if (isStalemate(loser, chessboard)) {
+        endGame("stalemate", loser == "red" ? "black" : "red");
     } else {
         showCheck("");
     }
@@ -547,8 +545,27 @@ function showCheck(msg) {
 
 // 终局：显示结果横幅，锁定棋盘（chessboard.status = false 使 clickBoard
 // 与 choosePiece/cancelPiece 全部拒绝后续操作），并提供"再来一局"。
-function showGameOver(result, loserColor) {
-    checkText.innerHTML = result;
+// ---- 终局统一入口 --------------------------------------------------------
+// reason: "checkmate" | "stalemate" | "resign" | "draw"
+// winner: "red" | "black" | "draw"
+// 统一做：横幅(明确写出"红方胜"或"黑方胜") + 锁定 status + 挂 Play Again。
+function endGame(reason, winner) {
+    var banner, winLabel;
+    if (reason == "checkmate") {
+        winLabel = winner == "red" ? "红方" : "黑方";
+        banner = winLabel + "胜利！（将死）";
+    } else if (reason == "stalemate") {
+        winLabel = winner == "red" ? "红方" : "黑方";
+        banner = winLabel + "胜利！（困毙）";
+    } else if (reason == "resign") {
+        winLabel = winner == "red" ? "红方" : "黑方";
+        banner = winLabel + "胜利！（对方认输）";
+    } else if (reason == "draw") {
+        banner = "和棋";
+    } else {
+        banner = "对局结束";
+    }
+    checkText.innerHTML = banner;
     checkText.style.display = "block";
     chessboard.status = false;
     chessboard.curPiece = null;
@@ -556,35 +573,64 @@ function showGameOver(result, loserColor) {
     var beginEl = document.getElementById("beginText");
     if (beginEl) beginEl.innerHTML = "Game End";
 
-    // 用 resign 按钮的父容器放一个"再来一局"，避免新建复杂布局
-    var again = document.getElementById("playAgainBtn");
-    if (!again) {
-        again = document.createElement("button");
+    var tt = document.getElementById("turnText");
+    if (tt) {
+        if (reason == "draw") tt.innerHTML = "和棋";
+        else if (winner == "red" || winner == "black") tt.innerHTML = (winner == "red" ? "红方" : "黑方") + "胜";
+    }
+
+    if (!document.getElementById("playAgainBtn")) {
+        var again = document.createElement("button");
         again.id = "playAgainBtn";
         again.className = "funcBtn";
         again.innerHTML = "Play Again";
-        again.addEventListener("click", function () {
-            chessboard.initBoard(situation);
-            chessboard.status = true;
-            chessboard.turn = "red";
-            chessboard.turnCnt = 0;
-            chessboard.curPiece = null;
-            deletBoard();
-            renderBoard();
-            var be = document.getElementById("beginText");
-            if (be) be.innerHTML = "Game Start";
-            var tt = document.getElementById("turnText");
-            if (tt) tt.innerHTML = "Red Turn";
-            var mv = document.getElementById("movesRecords");
-            if (mv) mv.innerHTML = "";
-            showCheck("");
-            again.remove();
-            initListeners();
-        });
+        again.addEventListener("click", restartGame);
         var anchorBtn = document.querySelector(".funcBtn");
         if (anchorBtn && anchorBtn.parentNode) anchorBtn.parentNode.appendChild(again);
         else document.body.appendChild(again);
     }
+}
+
+// 困毙：未被将军但当前方无任何合法着法。象棋规则困毙方判负。
+// 第二个参数是 Board 实例（提供 isCheck/findEnemies/couldCaptureAt/isSuisideMove）。
+function isStalemate(color, boardObj) {
+    var board = boardObj.board;
+    if (boardObj.isCheck(color, board)) return false;
+    var ownPieces = boardObj.findEnemies(color, board);
+    for (var i = 0; i < ownPieces.length; i++) {
+        var p = ownPieces[i];
+        for (var r = 0; r <= 9; r++) {
+            for (var c = 0; c <= 8; c++) {
+                if (r == p.row && c == p.col) continue;
+                var target = board[r][c];
+                if (target != null && target.color == p.color) continue;
+                if (!boardObj.couldCaptureAt(p, r, c, board)) continue;
+                if (!boardObj.isSuisideMove(p, r, c, board)) return false;
+            }
+        }
+    }
+    return true;
+}
+
+// 完全重置到开局（Play Again 用）
+function restartGame() {
+    chessboard.initBoard(situation);
+    chessboard.status = true;
+    chessboard.turn = "red";
+    chessboard.turnCnt = 0;
+    chessboard.curPiece = null;
+    deletBoard();
+    renderBoard();
+    var be = document.getElementById("beginText");
+    if (be) be.innerHTML = "Game Start";
+    var tt = document.getElementById("turnText");
+    if (tt) tt.innerHTML = "红方回合";
+    var mv = document.getElementById("movesRecords");
+    if (mv) mv.innerHTML = "";
+    showCheck("");
+    var again = document.getElementById("playAgainBtn");
+    if (again) again.remove();
+    initListeners();
 }
 
 // create pieces

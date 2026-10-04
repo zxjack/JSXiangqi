@@ -1,15 +1,30 @@
-table {
-    margin: 10px;
-    border-collapse: collapse;
+/* #boardFrame hosts the SVG board background and the chessboardContainer
+   pieces layer. Both share the same (170, 250) anchor that the legacy
+   <table class="board"> used, so the absolute-positioned SVG and the
+   pieces table render at the same coordinates. */
+#boardFrame {
+    position: absolute;
+    top: 170px;
+    left: 250px;
+    width: 585px;
+    height: 650px;
 }
 
-table,td.board {
-    border: 1px solid black;
+/* 棋子层 #boardPieces：10x9 个 65px 定位格，绝对定位到 SVG 棋盘交点。
+   每个格子用 transform:translate(-50%,-50%) 把自身中心对齐到交点。 */
+#boardPieces {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
 }
- 
-td {
-    height: 65px;
-    width: 65px;
+
+#boardPieces .cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
 }
 
 body {

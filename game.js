@@ -23,53 +23,152 @@ select.addEventListener("change", async function() {
     }
 });
 
-// set board shape
+// Build the board: #mainContainer holds a #boardFrame wrapper with two layers:
+//   1) SVG board background (positioned absolute, behind everything; SVG has
+//      pointer-events:none so it never blocks click events).
+//   2) #chessboardContainer (the 10x9 cell grid that hosts the pieces).
+// The SVG draws: wood-tone background, 9x10 grid lines, 楚河 / 汉界 river
+// text, and a "米" (rice/X) pattern in each palace. Cell size 65px, board
+// 585 x 650, anchored at the same (170,250) offset as the legacy CSS so
+// chessboardContainer lines up without any coordinate math.
 (function() {
-    window.main = document.createElement("div"); 
-    main.setAttribute("id", "mainContainer"); 
-    document.body.appendChild(main); 
+    window.main = document.createElement("div");
+    main.setAttribute("id", "mainContainer");
+    document.body.appendChild(main);
 
-    window.table = document.createElement("table");
-    window.tBody = document.createElement("tBody");
-    table.classList.add("board");
+    var frame = document.createElement("div");
+    frame.setAttribute("id", "boardFrame");
+    main.appendChild(frame);
 
-    for(var i=0;i<9;i++){
-        var row = tBody.insertRow(i);
-        for(var j=0;j<8;j++){
-            var cell = row.insertCell(j);
-            if(i!=4){cell.classList.add("board")}
-        }
+    // --- 棋盘坐标系（唯一真相来源）---
+    // CELL = 65px。棋盘是 10 列(col 0..8 之间的 9 条纵线) x 9 行(row 0..9
+    // 之间的 10 条横线)，但格子数组是 10 行(row) x 9 列(col)。
+    //   格子 (row, col) 中心 = (col*CELL + CELL/2, row*CELL + CELL/2)
+    //   棋盘线交点 (row, col)  = (col*CELL, row*CELL)   <-- 棋子在交点上
+    // 画布尺寸 = 9*CELL 宽 x 10*CELL 高 = 585 x 650（含右/下半格边距）。
+    // 棋子层 #boardPieces 用同样的 65px 网格，因此两者天然对齐。
+    window.CELL = 65;   // 暴露给棋子层（第二个 IIFE）共用同一坐标系
+    var CELL = window.CELL;
+    var W = 9 * CELL;   // 585
+    var H = 10 * CELL;  // 650
+
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("id", "boardSvg");
+    svg.setAttribute("class", "board-svg");
+    svg.setAttribute("width", String(W));
+    svg.setAttribute("height", String(H));
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.style.position = "absolute";
+    svg.style.top = "0";
+    svg.style.left = "0";
+    svg.style.pointerEvents = "none";
+
+    // Background fill (classic wood tone).
+    var bg = document.createElementNS(NS, "rect");
+    bg.setAttribute("x", "0");
+    bg.setAttribute("y", "0");
+    bg.setAttribute("width", String(W));
+    bg.setAttribute("height", String(H));
+    bg.setAttribute("fill", "#f5deb3");
+    svg.appendChild(bg);
+
+    // Helper to add a grid line.
+    function line(x1, y1, x2, y2, w) {
+        var ln = document.createElementNS(NS, "line");
+        ln.setAttribute("x1", x1);
+        ln.setAttribute("y1", y1);
+        ln.setAttribute("x2", x2);
+        ln.setAttribute("y2", y2);
+        ln.setAttribute("stroke", "#333");
+        ln.setAttribute("stroke-width", w || 1.5);
+        ln.setAttribute("stroke-linecap", "square");
+        svg.appendChild(ln);
     }
 
-    table.style.position="absolute";
-    table.style.top="200px";
-    table.style.left="280px";
-    table.appendChild(tBody);
-    main.appendChild(table);    
+    // 10 条横线：row 0..9，y = row * CELL，横跨 col 0..8。
+    for (var r = 0; r <= 9; r++) {
+        line(0, r * CELL, 8 * CELL, r * CELL, 1.5);
+    }
+    // 9 条纵线：col 0..8，x = col * CELL。楚河（第 4/5 行之间）处断开，
+    // 这是传统象棋棋盘的画法。
+    for (var c = 0; c <= 8; c++) {
+        var x = c * CELL;
+        line(x, 0,          x, 4 * CELL, 1.5);  // 上半盘
+        line(x, 5 * CELL,   x, 9 * CELL, 1.5);  // 下半盘
+    }
+
+    // Outer border (thicker frame around the 9x10 grid). Inset by ~3px so
+    // the border sits just inside the SVG canvas (585x650) and aligns with
+    // the outermost grid lines.
+    // 外框：正好贴住最外圈棋盘线 (0,0)-(8*CELL, 9*CELL)，加粗突出。
+    var outer = document.createElementNS(NS, "rect");
+    outer.setAttribute("x", "0");
+    outer.setAttribute("y", "0");
+    outer.setAttribute("width", String(8 * CELL));
+    outer.setAttribute("height", String(9 * CELL));
+    outer.setAttribute("fill", "none");
+    outer.setAttribute("stroke", "#333");
+    outer.setAttribute("stroke-width", "3");
+    svg.appendChild(outer);
+
+    // River text: 楚河 / 汉界 centered in the river strip.
+    var textRiver = document.createElementNS(NS, "text");
+    textRiver.setAttribute("x", String(4 * CELL));
+    textRiver.setAttribute("y", String(4 * CELL + 40));
+    textRiver.setAttribute("text-anchor", "middle");
+    textRiver.setAttribute("font-size", "26");
+    textRiver.setAttribute("font-family", "STKaiti, KaiTi, serif");
+    textRiver.setAttribute("fill", "#5a3a1a");
+    textRiver.textContent = "\u695A \u6CB3          \u6C49 \u754C";
+    svg.appendChild(textRiver);
+
+    // Palace diagonals (米 pattern). Endpoints at the cell CENTERS of the
+    // four advisor positions; the two diagonals per palace cross exactly
+    // at the center cell center. Cell centers live at (c*65+32.5, r*65+32.5).
+    // 九宫斜线端点落在棋盘线交点上：交点 (row, col) = (col*CELL, row*CELL)。
+    // 士位是 (0,3) (0,5) (2,3) (2,5)，正好是九宫的四个角交点。
+    function palace(r0, r2) {
+        function pt(r, c) {
+            return [c * CELL, r * CELL];
+        }
+        var tl = pt(r0, 3), tr = pt(r0, 5);
+        var bl = pt(r2, 3), br = pt(r2, 5);
+        line(tl[0], tl[1], br[0], br[1], 1.5);  // \ 对角线
+        line(tr[0], tr[1], bl[0], bl[1], 1.5);  // // 对角线
+    }
+    palace(0, 2);  // 黑方九宫：row 0..2, col 3..5
+    palace(7, 9);  // 红方九宫：row 7..9, col 3..5
+
+    frame.appendChild(svg);
 })();
 
-// generate board
+// 棋子层：在 SVG 棋盘之上放 10x9 个 65px 的定位格。
+// 每格用 transform:translate(-50%,-50%) 精确压到 SVG 棋盘线交点上，
+// 所以棋子永远落在交点（而不是格子中心），与棋盘线严丝合缝。
 (function() {
-    window.table = document.createElement("table");
-    window.tBody = document.createElement("tBody");
-    
+    window.tBody = document.createElement("div");
+    window.tBody.setAttribute("id", "boardPieces");
+    var CELL = window.CELL;
 
-    for(var i=0;i<10;i++){
-        window.row = tBody.insertRow(i);
-        for(var j=0;j<9;j++){
-            var cell = row.insertCell(j);
-            cell.setAttribute("data-x",i);
-            cell.setAttribute("data-y",j);
+    for (var i = 0; i < 10; i++) {
+        for (var j = 0; j < 9; j++) {
+            var cell = document.createElement("div");
+            cell.className = "cell";
+            cell.setAttribute("data-x", i);
+            cell.setAttribute("data-y", j);
+            cell.style.position = "absolute";
+            cell.style.left = (j * CELL) + "px";
+            cell.style.top = (i * CELL) + "px";
+            cell.style.width = CELL + "px";
+            cell.style.height = CELL + "px";
+            cell.style.transform = "translate(-50%, -50%)";
             cell.addEventListener("click", clickBoard, false);
+            tBody.appendChild(cell);
         }
     }
-
-    table.setAttribute("id", "chessboardContainer"); 
-    table.appendChild(tBody);
-    table.style.position="absolute";
-    table.style.top="170px";
-    table.style.left="250px";
-    main.appendChild(table);
+    // 挂在与 SVG 同一个 #boardFrame 内，共用同一原点。
+    document.getElementById("boardFrame").appendChild(tBody);
 })(); 
 
 // game start
@@ -439,19 +538,15 @@ function createPieces(x, y, icon, color) {
     div.classList.add("pieces");
     div.classList.add(color === "red" ? "red" : "black");
     div.appendChild(document.createTextNode(icon));
-    tBody.rows[x].cells[y].appendChild(div);
+    // 用 data-x/data-y 精确定位格子（棋子层现在是 div 网格，不是 table）
+    tBody.querySelector('div.cell[data-x="' + x + '"][data-y="' + y + '"]').appendChild(div);
     return div;
 }
 
 function deletBoard() {
-    for (let i=0; i<=9; i++) {
-        for (let j=0; j<=8; j++) {
-            var piece = tBody.rows[i].cells[j].querySelector("div"); 
-            if (piece != null) {
-                piece.remove(); 
-            } 
-        }
-    }
+    tBody.querySelectorAll("div.pieces").forEach(function (piece) {
+        piece.remove();
+    });
 }
 
 function renderBoard() {
@@ -466,4 +561,9 @@ function renderBoard() {
 }
 
 renderBoard(); 
-window.addEventListener("load", initListeners);
+// initListeners() must run after renderBoard() created the .pieces divs.
+// The legacy line `window.addEventListener("load", initListeners)` fails
+// because this script is loaded as <script type="module"> (defer-like), so
+// the load event has already fired by the time we reach this point. Call
+// it directly. renderBoard() runs at line 564 just above.
+initListeners();

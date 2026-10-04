@@ -227,11 +227,18 @@ select.addEventListener("change", async function() {
     resignBtn.addEventListener("click", handleResign); 
     btnContainer.appendChild(resignBtn); 
 
-    var drawBtn = document.createElement("button"); 
-    drawBtn.innerHTML = "Request Draw"; 
-    drawBtn.setAttribute("class", "funcBtn"); 
+    var drawBtn = document.createElement("button");
+    drawBtn.innerHTML = "Request Draw";
+    drawBtn.setAttribute("class", "funcBtn");
     drawBtn.addEventListener("click", handleDraw);
-    btnContainer.appendChild(drawBtn);  
+    btnContainer.appendChild(drawBtn);
+
+    var undoBtn = document.createElement("button");
+    undoBtn.innerHTML = "Undo";
+    undoBtn.setAttribute("class", "funcBtn");
+    undoBtn.setAttribute("id", "undoBtn");
+    undoBtn.addEventListener("click", handleUndo);
+    btnContainer.appendChild(undoBtn);
 
     // record sheet
     var movesContainer = document.createElement("div");
@@ -281,6 +288,84 @@ function handleDraw() {
     endGame("draw", "draw");
 }
 
+// 撤销最后一步：把 board 和棋盘 DOM 一起回到走这步之前。
+// 棋谱表里同时移除最后一个红/黑格子；空行整行删除。
+// 终局(status=false)状态下 Undo 也可用——比如认输后想撤掉认输。
+function handleUndo() {
+    if (stack.length == 0) return;
+    if (!chessboard.status) {
+        // 终局状态：撤销走法的同时把 status 重新打开，
+        // 让玩家能继续走。横幅、turnText、Play Again 全部复位。
+        chessboard.status = true;
+        showCheck("");
+        var be = document.getElementById("beginText");
+        if (be) be.innerHTML = "Game Start";
+        var tt = document.getElementById("turnText");
+        if (tt) tt.innerHTML = (chessboard.turn == "red" ? "红方" : "黑方") + "回合";
+        var again = document.getElementById("playAgainBtn");
+        if (again) again.remove();
+    }
+
+    var rec = stack.pop();
+    var board = chessboard.board;
+    rec.retractMove(board);
+
+    // DOM：移动的棋子 div 挪回原格
+    var src = document.querySelector('#boardPieces .cell[data-x="' + rec.newRow + '"][data-y="' + rec.newCol + '"]');
+    var dst = document.querySelector('#boardPieces .cell[data-x="' + rec.prevRow + '"][data-y="' + rec.prevCol + '"]');
+    var movedDiv = src.querySelector('div.pieces');
+    if (movedDiv) {
+        dst.appendChild(movedDiv);
+        movedDiv.style.backgroundColor = "#FAF0E6";
+    }
+    // 被吃的子如有，还原
+    if (rec.killedPiece) {
+        var killedDiv = document.createElement("div");
+        killedDiv.className = "pieces " + rec.killedPiece.color;
+        killedDiv.setAttribute("data-color", rec.killedPiece.color);
+        killedDiv.appendChild(document.createTextNode(rec.killedPiece.icon));
+        src.appendChild(killedDiv);
+    }
+
+    // 切回合：把 turn 翻回走这步的一方
+    chessboard.turn = (chessboard.turn == "red") ? "black" : "red";
+    chessboard.curPiece = null;
+
+    // turnCnt 与棋谱表同步：黑方走的一步不会创建新行，只需清空该行的黑方格；
+    // 红方走的一步会创建新行，需删除整行并 turnCnt -1。
+    syncMovesTableUndo(rec);
+
+    // 同步 turnText 横幅
+    var turnEl = document.getElementById("turnText");
+    if (turnEl) turnEl.innerHTML = (chessboard.turn == "red" ? "红方" : "黑方") + "回合";
+    showCheck("");
+    initListeners();
+}
+
+// 把棋谱表里"最后一步"的记录删掉。
+function syncMovesTableUndo(rec) {
+    var moveTable = document.getElementById("movesRecords");
+    if (!moveTable || !moveTable.rows || moveTable.rows.length <= 1) return;  // 只剩表头
+    // moveRecord() 在红方走棋时新建行，黑方走棋时只填该行黑格。
+    // 由于 stack 是按走子顺序 push 的，要撤销的 rec 就是 stack 顶端那条。
+    // 判断这一步是红还是黑：mover 是 Record.movePiece.color。
+    if (rec.movePiece.color == "red") {
+        // 红方走棋：删整行 + turnCnt -1
+        if (chessboard.turnCnt > 0) chessboard.turnCnt--;
+        var lastRow = moveTable.rows[moveTable.rows.length - 1];
+        if (lastRow.getAttribute("data-turn") == String(chessboard.turnCnt + 1)) {
+            lastRow.parentNode.removeChild(lastRow);
+        }
+    } else {
+        // 黑方走棋：只清掉该行的黑方格（"redMove" 是行号 + 红格 + 黑格布局）
+        var row = moveTable.querySelector('[data-turn="' + chessboard.turnCnt + '"]');
+        if (row) {
+            var blackCell = row.querySelector(".blackMove");
+            if (blackCell) blackCell.innerHTML = "";
+        }
+    }
+}
+
 function handleNewGame() {
     restartGame();
 }
@@ -307,25 +392,29 @@ function clickBoard(event) {
 
 // execute move
 function executeMove(newRow, newCol) {
-    var curRow = chessboard.curPiece.row; 
-    var curCol = chessboard.curPiece.col; 
-    chessboard.board[curRow][curCol] = null; 
-    chessboard.board[newRow][newCol] = chessboard.curPiece; 
+    var curRow = chessboard.curPiece.row;
+    var curCol = chessboard.curPiece.col;
+    // 先取出被吃的子（在 board[newRow][newCol] 被覆盖之前），Record 撤销时要还原
+    var capturedPiece = chessboard.board[newRow][newCol];
 
-    var source = document.querySelector(`[data-x="${curRow}"][data-y="${curCol}"]`); 
-    var tgt = document.querySelector(`[data-x="${newRow}"][data-y="${newCol}"]`); 
-    var clickedPiece = source.querySelector('div'); 
-    var tgtPiece = tgt.children[0]; 
+    chessboard.board[curRow][curCol] = null;
+    chessboard.board[newRow][newCol] = chessboard.curPiece;
 
-    source.removeChild(clickedPiece);
-    if (tgtPiece != null) {
-        tgt.removeChild(tgtPiece); 
+    var source = document.querySelector(`#boardPieces .cell[data-x="${curRow}"][data-y="${curCol}"]`);
+    var tgt = document.querySelector(`#boardPieces .cell[data-x="${newRow}"][data-y="${newCol}"]`);
+    var clickedPiece = source.querySelector('div.pieces');
+    var tgtPiece = tgt.querySelector('div.pieces');
+
+    if (clickedPiece) {
+        source.removeChild(clickedPiece);
+        tgt.appendChild(clickedPiece);
+        clickedPiece.style.backgroundColor = "#FAF0E6";
     }
-    tgt.appendChild(clickedPiece); 
-    clickedPiece.style.backgroundColor = "#FAF0E6"; 
-    
-    moveRecord(curRow, curCol, newRow, newCol, clickedPiece, tgtPiece);
-    console.log(stack);  
+    if (tgtPiece) tgt.removeChild(tgtPiece);
+
+    // Record 用 ChessPiece 对象（不是 DOM 节点），undo 才能正确还原 board 数组
+    moveRecord(curRow, curCol, newRow, newCol, chessboard.curPiece, capturedPiece);
+    console.log(stack); 
     switchSide(); // switch side 
 
     chessboard.curPiece.row = newRow; 
@@ -619,6 +708,7 @@ function restartGame() {
     chessboard.turn = "red";
     chessboard.turnCnt = 0;
     chessboard.curPiece = null;
+    stack.length = 0;       // 清空悔棋栈
     deletBoard();
     renderBoard();
     var be = document.getElementById("beginText");
